@@ -1,0 +1,1059 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
+    <title>隊形大師 (Formations Master)</title>
+    
+    <!-- 載入 Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- 載入 React 和 ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    
+    <!-- 載入 Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <style>
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #1f2937; 
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #4b5563; 
+            border-radius: 4px;
+        }
+        body {
+            margin: 0;
+            overflow: hidden;
+        }
+        
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+
+        .performer-selected {
+            filter: drop-shadow(0 0 10px rgba(168, 85, 247, 0.8));
+            animation: pulse-glow 1.5s ease-in-out infinite;
+        }
+
+        @keyframes pulse-glow {
+            0%, 100% {
+                filter: drop-shadow(0 0 10px rgba(168, 85, 247, 0.8));
+            }
+            50% {
+                filter: drop-shadow(0 0 15px rgba(168, 85, 247, 1));
+            }
+        }
+
+        .stage-center-marker {
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            width: 40px;
+            height: 40px;
+            pointer-events: none;
+            z-index: 1;
+        }
+
+        .stage-center-marker::before,
+        .stage-center-marker::after {
+            content: '';
+            position: absolute;
+            background: rgba(168, 85, 247, 0.4);
+        }
+
+        .stage-center-marker::before {
+            left: 50%;
+            top: 0;
+            width: 2px;
+            height: 100%;
+            transform: translateX(-50%);
+        }
+
+        .stage-center-marker::after {
+            left: 0;
+            top: 50%;
+            width: 100%;
+            height: 2px;
+            transform: translateY(-50%);
+        }
+
+        .stage-center-dot {
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            width: 8px;
+            height: 8px;
+            background: rgba(168, 85, 247, 0.6);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            box-shadow: 0 0 10px rgba(168, 85, 247, 0.5);
+        }
+
+        .loading-screen {
+            position: fixed;
+            inset: 0;
+            background: #111827;
+            display: flex;
+            align-items: center;
+            justify-center;
+            flex-direction: column;
+            gap: 1rem;
+            z-index: 9999;
+        }
+
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid rgba(168, 85, 247, 0.3);
+            border-top-color: #a855f7;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <!-- Loading Screen -->
+    <div id="loading" class="loading-screen">
+        <div class="spinner"></div>
+        <div class="text-white text-lg">載入中...</div>
+    </div>
+    
+    <div id="root"></div>
+    <div id="error" style="display:none; position:fixed; inset:0; background:#1f2937; color:white; padding:2rem; overflow:auto; z-index:10000;">
+        <h1 style="color:#ef4444; font-size:1.5rem; margin-bottom:1rem;">載入錯誤</h1>
+        <pre id="error-message" style="background:#111827; padding:1rem; border-radius:0.5rem; overflow:auto;"></pre>
+        <button onclick="location.reload()" style="margin-top:1rem; padding:0.5rem 1rem; background:#a855f7; border:none; border-radius:0.5rem; color:white; cursor:pointer;">重新載入</button>
+    </div>
+
+    <script type="text/babel">
+        try {
+            // 隱藏載入畫面
+            setTimeout(() => {
+                const loading = document.getElementById('loading');
+                if (loading) loading.style.display = 'none';
+            }, 100);
+
+            const { useState, useEffect, useRef } = React;
+
+            // Icon 元件
+            const Icon = ({ children, size = 24, ...props }) => (
+                <svg 
+                    xmlns="http://www.w3.org/2000/svg" 
+                    width={size} 
+                    height={size} 
+                    viewBox="0 0 24 24" 
+                    fill="none" 
+                    stroke="currentColor" 
+                    strokeWidth="2" 
+                    strokeLinecap="round" 
+                    strokeLinejoin="round" 
+                    {...props}
+                >
+                    {children}
+                </svg>
+            );
+
+            const Icons = {
+                Play: (props) => <Icon {...props}><polygon points="5 3 19 12 5 21 5 3"></polygon></Icon>,
+                Pause: (props) => <Icon {...props}><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></Icon>,
+                Plus: (props) => <Icon {...props}><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></Icon>,
+                Trash2: (props) => <Icon {...props}><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></Icon>,
+                Users: (props) => <Icon {...props}><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle></Icon>,
+                Settings: (props) => <Icon {...props}><circle cx="12" cy="12" r="3"></circle><path d="M12 1v6m0 6v6M5.64 5.64l4.24 4.24m6.36 6.36l4.24 4.24M1 12h6m6 0h6M5.64 18.36l4.24-4.24m6.36-6.36l4.24-4.24"></path></Icon>,
+                Menu: (props) => <Icon {...props}><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></Icon>,
+                X: (props) => <Icon {...props}><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></Icon>,
+                Edit: (props) => <Icon {...props}><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></Icon>,
+                Grid: (props) => <Icon {...props}><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="9" y1="3" x2="9" y2="21"></line></Icon>,
+                Folder: (props) => <Icon {...props}><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></Icon>,
+                Copy: (props) => <Icon {...props}><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></Icon>,
+            };
+
+            const DEFAULT_COLOR = '#FF69B4';
+            const CELL_SIZE = 50;
+            const DEFAULT_GRID_COLS = 16;
+            const DEFAULT_GRID_ROWS = 8;
+            const DEFAULT_PERFORMER_SIZE = 30;
+            const STORAGE_KEY = 'formation-master-v6';
+
+            const SHAPES = {
+                circle: (color) => <circle cx="12" cy="12" r="11" fill={color} />,
+                square: (color) => <rect x="2" y="2" width="20" height="20" rx="4" fill={color} />,
+                triangle: (color) => <polygon points="12,1 23,22 1,22" fill={color} />,
+            };
+
+            const PerformerShape = ({ shape, color }) => {
+                const renderShape = SHAPES[shape] || SHAPES.circle;
+                return (
+                    <svg width="100%" height="100%" viewBox="0 0 24 24" style={{ display: 'block' }}>
+                        {renderShape(color)}
+                    </svg>
+                );
+            };
+
+            function App() {
+                const [showSetup, setShowSetup] = useState(true);
+                const [setupStep, setSetupStep] = useState(1);
+                const [tempTeamName, setTempTeamName] = useState('我的隊伍');
+                const [tempCount, setTempCount] = useState(12);
+
+                const [teams, setTeams] = useState([]);
+                const [currentId, setCurrentId] = useState(null);
+                const [performers, setPerformers] = useState([]);
+                const [frames, setFrames] = useState([]);
+                const [currentFrame, setCurrentFrame] = useState(0);
+                
+                const [gridCols, setGridCols] = useState(DEFAULT_GRID_COLS);
+                const [gridRows, setGridRows] = useState(DEFAULT_GRID_ROWS);
+                const [performerSize, setPerformerSize] = useState(DEFAULT_PERFORMER_SIZE);
+                const [zoom, setZoom] = useState(1);
+                const [showGrid, setShowGrid] = useState(true);
+                const [snapToGrid, setSnapToGrid] = useState(true);
+                
+                const [showSettings, setShowSettings] = useState(false);
+                const [showTeamMgr, setShowTeamMgr] = useState(false);
+                const [editingId, setEditingId] = useState(null);
+                const [selectedId, setSelectedId] = useState(null);
+                const [draggingId, setDraggingId] = useState(null);
+                const [sidebarOpen, setSidebarOpen] = useState(true);
+
+                const [isPlaying, setIsPlaying] = useState(false);
+                const [playbackTime, setPlaybackTime] = useState(0);
+                const requestRef = useRef();
+                const startTimeRef = useRef();
+                const stageRef = useRef(null);
+                
+                const [pinchStart, setPinchStart] = useState(null);
+                const [pinchZoom, setPinchZoom] = useState(null);
+
+                const stageWidth = gridCols * CELL_SIZE;
+                const stageHeight = gridRows * CELL_SIZE;
+
+                // 初始載入
+                useEffect(() => {
+                    try {
+                        const saved = localStorage.getItem(STORAGE_KEY);
+                        if (saved) {
+                            const data = JSON.parse(saved);
+                            if (data.teams && data.teams.length > 0) {
+                                setTeams(data.teams);
+                                setCurrentId(data.currentId || data.teams[0].id);
+                                setShowSetup(false);
+                            }
+                        }
+                    } catch (e) {
+                        console.error('Load error:', e);
+                    }
+                }, []);
+
+                // 載入當前隊伍
+                useEffect(() => {
+                    if (!currentId || teams.length === 0) return;
+                    const team = teams.find(t => t.id === currentId);
+                    if (!team) return;
+                    
+                    setPerformers(team.performers || []);
+                    setFrames(team.frames || []);
+                    setGridCols(team.gridCols || DEFAULT_GRID_COLS);
+                    setGridRows(team.gridRows || DEFAULT_GRID_ROWS);
+                    setPerformerSize(team.performerSize || DEFAULT_PERFORMER_SIZE);
+                }, [currentId, teams]);
+
+                // 自動儲存
+                useEffect(() => {
+                    if (!currentId || teams.length === 0) return;
+                    
+                    const timer = setTimeout(() => {
+                        const updated = teams.map(t => {
+                            if (t.id === currentId) {
+                                return { ...t, performers, frames, gridCols, gridRows, performerSize };
+                            }
+                            return t;
+                        });
+                        setTeams(updated);
+                        localStorage.setItem(STORAGE_KEY, JSON.stringify({ teams: updated, currentId }));
+                    }, 500);
+                    
+                    return () => clearTimeout(timer);
+                }, [performers, frames, gridCols, gridRows, performerSize, currentId]);
+
+                // 完成初始設定
+                const completeSetup = () => {
+                    const newId = `team_${Date.now()}`;
+                    const newPerformers = [];
+                    const centerCol = Math.floor(gridCols / 2);
+                    
+                    for (let i = 0; i < tempCount; i++) {
+                        newPerformers.push({
+                            id: `p${i + 1}`,
+                            name: `${i + 1}`,
+                            color: DEFAULT_COLOR,
+                            shape: 'circle'
+                        });
+                    }
+
+                    const positions = {};
+                    const startRow = Math.max(1, Math.floor((gridRows - tempCount) / 2));
+                    
+                    newPerformers.forEach((p, idx) => {
+                        const row = Math.min(startRow + idx, gridRows - 1);
+                        positions[p.id] = {
+                            x: centerCol * CELL_SIZE,
+                            y: row * CELL_SIZE
+                        };
+                    });
+
+                    const newTeam = {
+                        id: newId,
+                        name: tempTeamName,
+                        performers: newPerformers,
+                        frames: [{
+                            id: 'f1',
+                            name: '開場',
+                            duration: 2000,
+                            positions
+                        }],
+                        gridCols: DEFAULT_GRID_COLS,
+                        gridRows: DEFAULT_GRID_ROWS,
+                        performerSize: DEFAULT_PERFORMER_SIZE,
+                    };
+
+                    setTeams([newTeam]);
+                    setCurrentId(newId);
+                    setShowSetup(false);
+                };
+
+                // 新增隊伍
+                const addTeam = () => {
+                    const newId = `team_${Date.now()}`;
+                    const count = 12;
+                    const newPerformers = [];
+                    const centerCol = Math.floor(gridCols / 2);
+                    
+                    for (let i = 0; i < count; i++) {
+                        newPerformers.push({
+                            id: `p${i + 1}_${Date.now()}`,
+                            name: `${i + 1}`,
+                            color: DEFAULT_COLOR,
+                            shape: 'circle'
+                        });
+                    }
+
+                    const positions = {};
+                    const startRow = Math.max(1, Math.floor((gridRows - count) / 2));
+                    newPerformers.forEach((p, idx) => {
+                        const row = Math.min(startRow + idx, gridRows - 1);
+                        positions[p.id] = { x: centerCol * CELL_SIZE, y: row * CELL_SIZE };
+                    });
+
+                    const newTeam = {
+                        id: newId,
+                        name: `隊伍 ${teams.length + 1}`,
+                        performers: newPerformers,
+                        frames: [{ id: 'f1', name: '開場', duration: 2000, positions }],
+                        gridCols: DEFAULT_GRID_COLS,
+                        gridRows: DEFAULT_GRID_ROWS,
+                        performerSize: DEFAULT_PERFORMER_SIZE,
+                    };
+
+                    setTeams([...teams, newTeam]);
+                    setCurrentId(newId);
+                };
+
+                // 刪除隊伍
+                const deleteTeam = (id) => {
+                    if (teams.length <= 1) return alert('至少需要一個隊伍');
+                    if (!confirm('確定刪除？')) return;
+                    const newTeams = teams.filter(t => t.id !== id);
+                    setTeams(newTeams);
+                    if (currentId === id) setCurrentId(newTeams[0].id);
+                };
+
+                // 複製隊伍
+                const copyTeam = (id) => {
+                    const team = teams.find(t => t.id === id);
+                    if (!team) return;
+                    const newId = `team_${Date.now()}`;
+                    const newTeam = { ...JSON.parse(JSON.stringify(team)), id: newId, name: `${team.name} (副本)` };
+                    setTeams([...teams, newTeam]);
+                    setCurrentId(newId);
+                };
+
+                // 新增/刪除/更新舞者
+                const addPerformer = () => {
+                    const id = `p${Date.now()}`;
+                    setPerformers([...performers, { id, name: `${performers.length + 1}`, color: DEFAULT_COLOR, shape: 'circle' }]);
+                };
+
+                const removePerformer = (id) => {
+                    if (!confirm('確定刪除？')) return;
+                    setPerformers(performers.filter(p => p.id !== id));
+                    setFrames(frames.map(f => {
+                        const pos = { ...f.positions };
+                        delete pos[id];
+                        return { ...f, positions: pos };
+                    }));
+                    if (editingId === id) setEditingId(null);
+                    if (selectedId === id) setSelectedId(null);
+                };
+
+                const updatePerformer = (id, props) => {
+                    setPerformers(performers.map(p => p.id === id ? { ...p, ...props } : p));
+                };
+
+                // 新增/刪除隊形
+                const addFrame = () => {
+                    const last = frames[frames.length - 1];
+                    const newFrame = {
+                        id: `f${Date.now()}`,
+                        name: `隊形 ${frames.length + 1}`,
+                        duration: 2000,
+                        positions: JSON.parse(JSON.stringify(last.positions))
+                    };
+                    setFrames([...frames, newFrame]);
+                    setCurrentFrame(frames.length);
+                };
+
+                const deleteFrame = (idx) => {
+                    if (frames.length <= 1) return alert('至少需要一個隊形');
+                    const newFrames = frames.filter((_, i) => i !== idx);
+                    setFrames(newFrames);
+                    if (currentFrame >= newFrames.length) setCurrentFrame(newFrames.length - 1);
+                };
+
+                // 更新位置
+                const updatePosition = (id, x, y) => {
+                    const newFrames = [...frames];
+                    newFrames[currentFrame].positions = {
+                        ...newFrames[currentFrame].positions,
+                        [id]: { x, y }
+                    };
+                    setFrames(newFrames);
+                };
+
+                // 計算位置
+                const calcPosition = (clientX, clientY) => {
+                    if (!stageRef.current) return { x: 0, y: 0 };
+                    const rect = stageRef.current.getBoundingClientRect();
+                    const scaleX = (stageWidth * zoom) / rect.width;
+                    const scaleY = (stageHeight * zoom) / rect.height;
+                    let x = (clientX - rect.left) * scaleX;
+                    let y = (clientY - rect.top) * scaleY;
+                    return {
+                        x: Math.max(0, Math.min(stageWidth, x)),
+                        y: Math.max(0, Math.min(stageHeight, y))
+                    };
+                };
+
+                // 事件處理
+                const handleMouseDown = (e, id) => {
+                    if (isPlaying) return;
+                    setDraggingId(id);
+                    setSelectedId(id);
+                    e.stopPropagation();
+                };
+
+                const handleMouseMove = (e) => {
+                    if (!draggingId || isPlaying) return;
+                    e.preventDefault();
+                    let { x, y } = calcPosition(e.clientX, e.clientY);
+                    if (snapToGrid) {
+                        const gx = Math.round(x / CELL_SIZE);
+                        const gy = Math.round(y / CELL_SIZE);
+                        x = Math.max(0, Math.min(gridCols - 1, gx)) * CELL_SIZE;
+                        y = Math.max(0, Math.min(gridRows - 1, gy)) * CELL_SIZE;
+                    }
+                    updatePosition(draggingId, x, y);
+                };
+
+                const handleMouseUp = () => setDraggingId(null);
+
+                const handleTouchStart = (e, id) => {
+                    if (isPlaying) return;
+                    
+                    if (e.touches.length === 2) {
+                        const t1 = e.touches[0];
+                        const t2 = e.touches[1];
+                        const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+                        setPinchStart(dist);
+                        setPinchZoom(zoom);
+                        return;
+                    }
+                    
+                    setDraggingId(id);
+                    setSelectedId(id);
+                    e.stopPropagation();
+                };
+
+                const handleTouchMove = (e) => {
+                    if (isPlaying) return;
+                    
+                    if (e.touches.length === 2 && pinchStart !== null) {
+                        e.preventDefault();
+                        const t1 = e.touches[0];
+                        const t2 = e.touches[1];
+                        const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+                        const scale = dist / pinchStart;
+                        setZoom(Math.max(0.3, Math.min(3, pinchZoom * scale)));
+                        return;
+                    }
+                    
+                    if (!draggingId) return;
+                    e.preventDefault();
+                    const touch = e.touches[0];
+                    if (!touch) return;
+                    
+                    let { x, y } = calcPosition(touch.clientX, touch.clientY);
+                    if (snapToGrid) {
+                        const gx = Math.round(x / CELL_SIZE);
+                        const gy = Math.round(y / CELL_SIZE);
+                        x = Math.max(0, Math.min(gridCols - 1, gx)) * CELL_SIZE;
+                        y = Math.max(0, Math.min(gridRows - 1, gy)) * CELL_SIZE;
+                    }
+                    updatePosition(draggingId, x, y);
+                };
+
+                const handleTouchEnd = () => {
+                    setDraggingId(null);
+                    setPinchStart(null);
+                    setPinchZoom(null);
+                };
+
+                const displayPositions = frames[currentFrame]?.positions || {};
+                const currentTeam = teams.find(t => t.id === currentId);
+                const editingPerformer = performers.find(p => p.id === editingId);
+
+                // 初始設定畫面
+                if (showSetup) {
+                    return (
+                        <div className="fixed inset-0 flex items-center justify-center bg-gray-900">
+                            <div className="bg-gray-800 border border-gray-700 p-8 rounded-xl w-96 shadow-2xl">
+                                {setupStep === 1 ? (
+                                    <>
+                                        <h2 className="text-2xl font-bold mb-6 text-white flex items-center gap-2">
+                                            <Icons.Users size={28} className="text-purple-500" />
+                                            建立新隊伍
+                                        </h2>
+                                        <div className="space-y-4">
+                                            <div>
+                                                <label className="block text-sm text-gray-400 mb-2">隊伍名稱</label>
+                                                <input 
+                                                    type="text"
+                                                    value={tempTeamName}
+                                                    onChange={(e) => setTempTeamName(e.target.value)}
+                                                    className="w-full bg-gray-900 border border-gray-600 rounded px-4 py-3 text-white focus:border-purple-500 outline-none text-lg"
+                                                    placeholder="例如：舞蹈社A隊"
+                                                    autoFocus
+                                                />
+                                            </div>
+                                            <button 
+                                                onClick={() => setSetupStep(2)}
+                                                disabled={!tempTeamName.trim()}
+                                                className="w-full py-3 bg-purple-600 hover:bg-purple-500 disabled:bg-gray-600 disabled:cursor-not-allowed rounded-lg font-medium text-white text-lg"
+                                            >
+                                                下一步
+                                            </button>
+                                        </div>
+                                    </>
+                                ) : (
+                                    <>
+                                        <h2 className="text-2xl font-bold mb-6 text-white flex items-center gap-2">
+                                            <Icons.Users size={28} className="text-purple-500" />
+                                            設定舞者數量
+                                        </h2>
+                                        <div className="space-y-6">
+                                            <div>
+                                                <label className="block text-sm text-gray-400 mb-2">舞者人數：{tempCount} 位</label>
+                                                <input 
+                                                    type="range"
+                                                    min="1"
+                                                    max="100"
+                                                    value={tempCount}
+                                                    onChange={(e) => setTempCount(Number(e.target.value))}
+                                                    className="w-full"
+                                                />
+                                                <div className="flex justify-between text-xs text-gray-500 mt-1">
+                                                    <span>1</span>
+                                                    <span>50</span>
+                                                    <span>100</span>
+                                                </div>
+                                            </div>
+                                            <input 
+                                                type="number"
+                                                min="1"
+                                                max="100"
+                                                value={tempCount}
+                                                onChange={(e) => setTempCount(Math.max(1, Math.min(100, Number(e.target.value))))}
+                                                className="w-full bg-gray-900 border border-gray-600 rounded px-4 py-3 text-white focus:border-purple-500 outline-none text-center text-2xl font-bold"
+                                            />
+                                            <div className="flex gap-3">
+                                                <button 
+                                                    onClick={() => setSetupStep(1)}
+                                                    className="flex-1 py-3 bg-gray-700 hover:bg-gray-600 rounded-lg font-medium text-white"
+                                                >
+                                                    上一步
+                                                </button>
+                                                <button 
+                                                    onClick={completeSetup}
+                                                    className="flex-1 py-3 bg-purple-600 hover:bg-purple-500 rounded-lg font-medium text-white"
+                                                >
+                                                    開始編排
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+                    );
+                }
+
+                if (!currentTeam) return <div className="flex items-center justify-center h-screen bg-gray-900 text-white">載入中...</div>;
+
+                return (
+                    <div 
+                        className="flex flex-col h-screen bg-gray-900 text-white overflow-hidden"
+                        onMouseUp={handleMouseUp}
+                        onMouseMove={handleMouseMove}
+                        onTouchMove={handleTouchMove}
+                        onTouchEnd={handleTouchEnd}
+                    >
+                        {/* Header */}
+                        <div className="h-14 bg-gray-800 border-b border-gray-700 flex items-center justify-between px-4 shrink-0 z-30">
+                            <div className="flex items-center gap-2 min-w-0">
+                                <button onClick={() => setSidebarOpen(!sidebarOpen)} className="md:hidden p-1 text-gray-400 hover:text-white">
+                                    {sidebarOpen ? <Icons.X size={24} /> : <Icons.Menu size={24} />}
+                                </button>
+                                <div className="bg-purple-600 p-1.5 rounded-lg">
+                                    <Icons.Users size={20} />
+                                </div>
+                                <h1 className="text-lg font-bold truncate">{currentTeam.name}</h1>
+                            </div>
+                            
+                            <div className="flex items-center gap-2">
+                                <button 
+                                    onClick={() => setShowTeamMgr(true)}
+                                    className="p-2 hover:bg-gray-700 rounded-full text-gray-400 hover:text-white"
+                                    title="隊伍管理"
+                                >
+                                    <Icons.Folder size={20} />
+                                </button>
+
+                                <button 
+                                    onClick={() => setShowSettings(true)}
+                                    className="p-2 hover:bg-gray-700 rounded-full text-gray-400 hover:text-white"
+                                    title="設定"
+                                >
+                                    <Icons.Settings size={20} />
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* 隊伍管理視窗 */}
+                        {showTeamMgr && (
+                            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70" onClick={() => setShowTeamMgr(false)}>
+                                <div className="bg-gray-800 border border-gray-700 p-6 rounded-xl w-96 max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+                                    <h3 className="text-xl font-bold mb-4 flex items-center gap-2 text-white">
+                                        <Icons.Folder size={20} /> 隊伍管理
+                                    </h3>
+                                    
+                                    <div className="space-y-3 mb-6">
+                                        {teams.map(team => (
+                                            <div 
+                                                key={team.id}
+                                                className={`p-3 rounded-lg border-2 cursor-pointer ${team.id === currentId ? 'border-purple-500 bg-purple-900/30' : 'border-gray-600 bg-gray-750 hover:border-gray-500'}`}
+                                                onClick={() => { setCurrentId(team.id); setShowTeamMgr(false); }}
+                                            >
+                                                <div className="flex justify-between items-center">
+                                                    <div>
+                                                        <div className="font-medium text-white">{team.name}</div>
+                                                        <div className="text-xs text-gray-400 mt-1">
+                                                            {team.performers.length} 位舞者 · {team.frames.length} 個隊形
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex gap-1">
+                                                        <button
+                                                            onClick={(e) => { e.stopPropagation(); copyTeam(team.id); }}
+                                                            className="p-1.5 hover:bg-gray-700 rounded text-blue-400"
+                                                        >
+                                                            <Icons.Copy size={16} />
+                                                        </button>
+                                                        <button
+                                                            onClick={(e) => { e.stopPropagation(); deleteTeam(team.id); }}
+                                                            className="p-1.5 hover:bg-gray-700 rounded text-red-400"
+                                                        >
+                                                            <Icons.Trash2 size={16} />
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+
+                                    <button onClick={addTeam} className="w-full py-2 bg-purple-600 hover:bg-purple-500 rounded font-medium text-white flex items-center justify-center gap-2">
+                                        <Icons.Plus size={18} /> 新增隊伍
+                                    </button>
+
+                                    <button onClick={() => setShowTeamMgr(false)} className="w-full mt-3 py-2 bg-gray-700 hover:bg-gray-600 rounded font-medium text-white">
+                                        關閉
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* 設定視窗 */}
+                        {showSettings && (
+                            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70" onClick={() => setShowSettings(false)}>
+                                <div className="bg-gray-800 border border-gray-700 p-6 rounded-xl w-96 max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+                                    <h3 className="text-xl font-bold mb-6 text-white"><Icons.Settings size={20} className="inline mr-2" /> 設定</h3>
+                                    
+                                    <div className="space-y-6">
+                                        <div className="bg-gray-750 p-4 rounded-lg">
+                                            <h4 className="text-sm font-bold text-gray-300 mb-3">格線設定</h4>
+                                            <div className="space-y-3">
+                                                <div>
+                                                    <label className="block text-sm text-gray-400 mb-1">格線寬度（格數）：{gridCols}</label>
+                                                    <input 
+                                                        type="number" 
+                                                        value={gridCols}
+                                                        onChange={(e) => setGridCols(Math.max(4, Math.min(50, Number(e.target.value))))}
+                                                        className="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2 text-white focus:border-purple-500 outline-none"
+                                                        min="4"
+                                                        max="50"
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="block text-sm text-gray-400 mb-1">格線深度（格數）：{gridRows}</label>
+                                                    <input 
+                                                        type="number" 
+                                                        value={gridRows}
+                                                        onChange={(e) => setGridRows(Math.max(4, Math.min(50, Number(e.target.value))))}
+                                                        className="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2 text-white focus:border-purple-500 outline-none"
+                                                        min="4"
+                                                        max="50"
+                                                    />
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div className="bg-gray-750 p-4 rounded-lg">
+                                            <h4 className="text-sm font-bold text-gray-300 mb-3">舞者大小</h4>
+                                            <div>
+                                                <label className="block text-sm text-gray-400 mb-2">大小：{performerSize}px</label>
+                                                <input 
+                                                    type="range" 
+                                                    min="15" 
+                                                    max="60" 
+                                                    step="5"
+                                                    value={performerSize}
+                                                    onChange={(e) => setPerformerSize(Number(e.target.value))}
+                                                    className="w-full"
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <div className="bg-gray-750 p-4 rounded-lg">
+                                            <h4 className="text-sm font-bold text-gray-300 mb-3">顯示選項</h4>
+                                            <div className="space-y-3">
+                                                <div className="flex items-center justify-between">
+                                                    <span className="text-sm text-gray-300">顯示格線</span>
+                                                    <button 
+                                                        onClick={() => setShowGrid(!showGrid)}
+                                                        className={`relative w-12 h-6 rounded-full ${showGrid ? 'bg-green-600' : 'bg-gray-600'}`}
+                                                    >
+                                                        <div className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform ${showGrid ? 'translate-x-6' : ''}`}></div>
+                                                    </button>
+                                                </div>
+
+                                                <div className="flex items-center justify-between">
+                                                    <span className="text-sm text-gray-300">吸附格線</span>
+                                                    <button 
+                                                        onClick={() => setSnapToGrid(!snapToGrid)}
+                                                        className={`relative w-12 h-6 rounded-full ${snapToGrid ? 'bg-green-600' : 'bg-gray-600'}`}
+                                                    >
+                                                        <div className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform ${snapToGrid ? 'translate-x-6' : ''}`}></div>
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <button onClick={() => setShowSettings(false)} className="w-full py-2 bg-purple-600 hover:bg-purple-500 rounded font-medium text-white">
+                                            完成
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* 舞者編輯視窗 */}
+                        {editingPerformer && (
+                            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70" onClick={() => setEditingId(null)}>
+                                <div className="bg-gray-800 border border-gray-700 p-6 rounded-xl w-80 max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+                                    <div className="flex justify-between items-center mb-4">
+                                        <h3 className="text-xl font-bold text-white">舞者設定</h3>
+                                        <button onClick={() => setEditingId(null)} className="text-gray-400 hover:text-white"><Icons.X size={20} /></button>
+                                    </div>
+                                    
+                                    <div className="space-y-5">
+                                        <div>
+                                            <label className="block text-sm text-gray-400 mb-1">名稱 / 代號</label>
+                                            <input 
+                                                value={editingPerformer.name}
+                                                onChange={(e) => updatePerformer(editingPerformer.id, { name: e.target.value })}
+                                                className="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2 text-white focus:border-purple-500 outline-none"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm text-gray-400 mb-2">顏色</label>
+                                            <div className="relative w-full h-10 rounded border-2 border-gray-600 overflow-hidden">
+                                                <input 
+                                                    type="color" 
+                                                    value={editingPerformer.color}
+                                                    onChange={(e) => updatePerformer(editingPerformer.id, { color: e.target.value })}
+                                                    className="absolute inset-0 w-full h-full cursor-pointer"
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <div className="pt-2 border-t border-gray-700 flex justify-between">
+                                            <button 
+                                                onClick={() => removePerformer(editingPerformer.id)}
+                                                className="px-4 py-2 text-red-400 hover:text-red-300 text-sm hover:bg-red-900/20 rounded"
+                                            >
+                                                刪除舞者
+                                            </button>
+                                            <button 
+                                                onClick={() => setEditingId(null)}
+                                                className="px-6 py-2 bg-purple-600 hover:bg-purple-500 rounded font-medium text-white text-sm"
+                                            >
+                                                完成
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        <div className="flex flex-1 overflow-hidden relative">
+                            {/* Sidebar */}
+                            <div className={`absolute md:relative inset-y-0 left-0 z-20 w-64 bg-gray-800 border-r border-gray-700 flex flex-col transform transition-transform ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0 md:w-0 md:border-none md:overflow-hidden'}`}>
+                                <button onClick={() => setSidebarOpen(false)} className="absolute right-2 top-2 p-1 text-gray-400 hover:text-white md:hidden"><Icons.X size={20} /></button>
+
+                                <div className="p-4 border-b border-gray-700 flex justify-between items-center">
+                                    <h2 className="font-semibold text-gray-300">舞者名單</h2>
+                                    <button onClick={addPerformer} className="p-1 hover:bg-gray-700 rounded text-green-400" title="新增舞者"><Icons.Plus size={20} /></button>
+                                </div>
+                                <div className="flex-1 overflow-y-auto p-2 space-y-2">
+                                    {performers.map(p => (
+                                        <div 
+                                            key={p.id} 
+                                            className={`flex items-center gap-3 p-2 rounded-lg group cursor-pointer ${selectedId === p.id ? 'bg-purple-900/50 border-2 border-purple-500' : 'bg-gray-750 hover:bg-gray-700'}`}
+                                            onClick={() => setSelectedId(p.id)}
+                                        >
+                                            <button 
+                                                onClick={(e) => { e.stopPropagation(); setEditingId(p.id); }}
+                                                className="relative w-8 h-8 flex items-center justify-center shrink-0 hover:scale-110"
+                                            >
+                                                <PerformerShape shape={p.shape} color={p.color} />
+                                                <div className="absolute -bottom-1 -right-1 bg-gray-800 rounded-full p-0.5 border border-gray-600">
+                                                    <Icons.Edit size={8} className="text-white" />
+                                                </div>
+                                            </button>
+                                            
+                                            <input 
+                                                value={p.name}
+                                                onChange={(e) => { e.stopPropagation(); updatePerformer(p.id, { name: e.target.value }); }}
+                                                onClick={(e) => e.stopPropagation()}
+                                                className="bg-transparent border-none text-sm text-gray-200 focus:outline-none w-full"
+                                            />
+                                            
+                                            <button 
+                                                onClick={(e) => { e.stopPropagation(); removePerformer(p.id); }}
+                                                className="opacity-100 sm:opacity-0 group-hover:opacity-100 text-gray-500 hover:text-red-400"
+                                            >
+                                                <Icons.Trash2 size={16} />
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                                <div className="p-4 border-t border-gray-700 text-xs text-gray-500 text-center">
+                                    共 {performers.length} 位舞者
+                                </div>
+                            </div>
+                            
+                            {sidebarOpen && <div className="absolute inset-0 bg-black/50 z-10 md:hidden" onClick={() => setSidebarOpen(false)} />}
+
+                            {/* Stage */}
+                            <div className="flex-1 bg-gray-900 relative overflow-hidden flex flex-col">
+                                {zoom !== 1 && (
+                                    <div className="absolute top-4 right-4 z-10 bg-blue-600/80 backdrop-blur-sm px-3 py-1.5 rounded-lg text-xs text-white border border-blue-500 pointer-events-none">
+                                        縮放: {(zoom * 100).toFixed(0)}% (雙指調整)
+                                    </div>
+                                )}
+
+                                <div className="flex-1 flex items-center justify-center p-4 bg-gray-900 overflow-auto">
+                                    <div 
+                                        ref={stageRef}
+                                        onClick={() => setSelectedId(null)}
+                                        className="relative bg-gray-850 shadow-2xl border border-gray-700 rounded-sm overflow-hidden select-none"
+                                        style={{
+                                            width: stageWidth * zoom,
+                                            height: stageHeight * zoom,
+                                            backgroundImage: showGrid ? `linear-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px)` : 'none',
+                                            backgroundSize: `${(CELL_SIZE / stageWidth * 100) * zoom}% ${(CELL_SIZE / stageHeight * 100) * zoom}%`,
+                                            touchAction: 'none'
+                                        }}
+                                    >
+                                        {/* 中心標記 */}
+                                        <div className="stage-center-marker">
+                                            <div className="stage-center-dot"></div>
+                                        </div>
+                                        
+                                        <div className="absolute bottom-2 left-0 right-0 text-center text-gray-600 text-xs font-bold opacity-50 pointer-events-none">
+                                            舞台前方 (AUDIENCE)
+                                        </div>
+
+                                        {/* Performers */}
+                                        {performers.map(p => {
+                                            const pos = displayPositions[p.id] || { x: 0, y: 0 };
+                                            const isSelected = selectedId === p.id;
+                                            const isDragging = draggingId === p.id;
+
+                                            return (
+                                                <div
+                                                    key={p.id}
+                                                    onMouseDown={(e) => handleMouseDown(e, p.id)}
+                                                    onTouchStart={(e) => handleTouchStart(e, p.id)}
+                                                    className={`absolute flex items-center justify-center cursor-grab active:cursor-grabbing ${isDragging ? 'scale-125 z-50' : isSelected ? 'z-40' : 'hover:scale-110 z-10'}`}
+                                                    style={{
+                                                        left: `${(pos.x / stageWidth) * 100}%`,
+                                                        top: `${(pos.y / stageHeight) * 100}%`,
+                                                        width: `${(performerSize / stageWidth) * 100}%`,
+                                                        height: `${(performerSize / stageHeight) * 100}%`,
+                                                        transform: 'translate(-50%, -50%)',
+                                                        transition: isDragging ? 'none' : 'transform 0.1s'
+                                                    }}
+                                                >
+                                                    <div className={`w-full h-full ${isSelected ? 'performer-selected' : ''}`}>
+                                                        <PerformerShape shape={p.shape} color={p.color} />
+                                                    </div>
+                                                    
+                                                    <span className="absolute inset-0 flex items-center justify-center pointer-events-none select-none text-gray-900/80 font-bold" style={{ fontSize: `${Math.max(8, performerSize / 4)}px` }}>
+                                                        {p.name}
+                                                    </span>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+
+                                {/* Timeline + Teams */}
+                                <div className="bg-gray-800 border-t border-gray-700 shrink-0 z-30">
+                                    <div className="h-32 flex flex-col">
+                                        <div className="flex justify-between items-center px-4 py-2 border-b border-gray-700">
+                                            <span className="text-xs font-semibold text-gray-400">隊形時間軸 ({frames.length})</span>
+                                            <button onClick={addFrame} className="flex items-center gap-1 px-3 py-1 bg-blue-600 hover:bg-blue-500 rounded text-xs font-medium">
+                                                <Icons.Plus size={14} /> 複製
+                                            </button>
+                                        </div>
+
+                                        <div className="flex-1 overflow-x-auto p-2 flex gap-3 items-center">
+                                            {frames.map((frame, idx) => (
+                                                <div 
+                                                    key={frame.id}
+                                                    onClick={() => setCurrentFrame(idx)}
+                                                    className={`relative flex-shrink-0 w-24 h-20 rounded-lg border-2 cursor-pointer group ${currentFrame === idx ? 'border-purple-500 bg-gray-700' : 'border-gray-600 bg-gray-750 hover:border-gray-500'}`}
+                                                >
+                                                    <div className="flex-1 relative bg-gray-900 m-1 rounded overflow-hidden">
+                                                        {performers.map(p => {
+                                                            const pos = frame.positions[p.id];
+                                                            if (!pos) return null;
+                                                            return (
+                                                                <div 
+                                                                    key={p.id}
+                                                                    className="absolute"
+                                                                    style={{
+                                                                        left: `${(pos.x / stageWidth) * 100}%`,
+                                                                        top: `${(pos.y / stageHeight) * 100}%`,
+                                                                        width: `${(performerSize / stageWidth) * 100}%`,
+                                                                        height: `${(performerSize / stageHeight) * 100}%`,
+                                                                        transform: 'translate(-50%, -50%)'
+                                                                    }}
+                                                                >
+                                                                    <PerformerShape shape={p.shape} color={p.color} />
+                                                                </div>
+                                                            )
+                                                        })}
+                                                    </div>
+
+                                                    <button 
+                                                        onClick={(e) => { e.stopPropagation(); deleteFrame(idx); }}
+                                                        className="absolute top-1 right-1 p-1 bg-red-500/80 hover:bg-red-600 text-white rounded opacity-0 group-hover:opacity-100"
+                                                    >
+                                                        <Icons.Trash2 size={10} />
+                                                    </button>
+
+                                                    <div className="absolute top-1 left-1 w-4 h-4 bg-gray-600/80 rounded flex items-center justify-center text-[9px] text-white">
+                                                        {idx + 1}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                            
+                                            <button onClick={addFrame} className="flex-shrink-0 w-10 h-20 rounded-lg border-2 border-dashed border-gray-600 hover:border-gray-400 hover:bg-gray-800 flex items-center justify-center text-gray-500">
+                                                <Icons.Plus size={24} />
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <div className="h-12 border-t border-gray-700 bg-gray-850 flex items-center px-4 gap-2 overflow-x-auto no-scrollbar">
+                                        <span className="text-xs text-gray-500 shrink-0">隊伍：</span>
+                                        {teams.map(team => (
+                                            <button
+                                                key={team.id}
+                                                onClick={() => setCurrentId(team.id)}
+                                                className={`px-3 py-1 rounded text-xs font-medium shrink-0 ${team.id === currentId ? 'bg-purple-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
+                                            >
+                                                {team.name}
+                                            </button>
+                                        ))}
+                                        <button onClick={addTeam} className="px-3 py-1 rounded text-xs font-medium bg-gray-700 text-gray-300 hover:bg-gray-600 shrink-0 flex items-center gap-1">
+                                            <Icons.Plus size={14} /> 新增
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                );
+            }
+
+            const root = ReactDOM.createRoot(document.getElementById('root'));
+            root.render(<App />);
+            
+        } catch (error) {
+            console.error('App Error:', error);
+            const errorDiv = document.getElementById('error');
+            const errorMsg = document.getElementById('error-message');
+            const loading = document.getElementById('loading');
+            
+            if (loading) loading.style.display = 'none';
+            if (errorDiv) errorDiv.style.display = 'block';
+            if (errorMsg) errorMsg.textContent = error.stack || error.message;
+        }
+    </script>
+</body>
+</html>
